@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Meal Planner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Warm Neutrals with Soft Green & Amber Accents -->
+    <!-- Application Structure Plan: A task-oriented, multi-section single-page application. The structure includes: 1) A main dashboard for a budget overview, 2) An inventory section for existing items, 3) An interactive shopping list that dynamically updates the budget, 4) A filterable recipe browser, and 5) A tips section. This structure was chosen to guide the user through a logical workflow: see what you have, determine what you need (within budget), and then decide what to make. This is more actionable and engaging than a linear report, promoting exploration and practical use of the information. -->
+    <!-- Visualization & Content Choices: 1. Budget: Goal(Compare/Inform) -> Donut Chart (Chart.js/Canvas) -> Interactive update from checklist -> Justification: Visually communicates budget status instantly. 2. Inventory: Goal(Inform) -> HTML/CSS Columns with editable lists and add/remove functionality -> Dynamic user input -> Justification: Allows user to manage their actual kitchen inventory. 3. Shopping List: Goal(Organize/Compare) -> Interactive HTML Table with AI suggestions -> Checkboxes update chart, AI generates new items -> Justification: Simulates shopping, provides real-time budget feedback, and leverages LLM for personalized suggestions. 4. Recipes: Goal(Organize/Inform) -> Filterable HTML/CSS Cards with AI generation -> JS filtering, modals, and LLM generates new recipes based on live inventory -> Justification: Allows users to easily find relevant meals and get dynamic, tailored ideas. 5. Tips: Goal(Inform) -> HTML/CSS Cards -> Static display -> Justification: Breaks down advice into digestible chunks. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .nav-link {
+            transition: all 0.3s ease;
+        }
+        .nav-link.active {
+            color: #10B981; /* emerald-500 */
+            border-bottom-color: #10B981;
+        }
+        .recipe-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .recipe-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        .chart-container {
+            position: relative;
+            margin-left: auto;
+            margin-right: auto;
+            height: 280px;
+            width: 100%;
+            max-width: 280px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 320px;
+                max-width: 320px;
+            }
+        }
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 40;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 50;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #10B981;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800">
+
+    <div id="app" class="container mx-auto p-4 md:p-8 max-w-7xl">
+
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-stone-900">Your Week of Culinary Creativity</h1>
+            <p class="text-stone-600 mt-2 text-lg">Maximize your groceries with a strategic Trader Joe's boost.</p>
+        </header>
+
+        <nav class="flex justify-center border-b border-stone-200 mb-8 space-x-2 md:space-x-8">
+            <a href="#dashboard" class="nav-link active font-semibold py-4 px-2 md:px-4 border-b-2 border-transparent text-stone-500 hover:text-emerald-500">Dashboard</a>
+            <a href="#inventory" class="nav-link font-semibold py-4 px-2 md:px-4 border-b-2 border-transparent text-stone-500 hover:text-emerald-500">My Kitchen</a>
+            <a href="#shopping" class="nav-link font-semibold py-4 px-2 md:px-4 border-b-2 border-transparent text-stone-500 hover:text-emerald-500">Shopping List</a>
+            <a href="#recipes" class="nav-link font-semibold py-4 px-2 md:px-4 border-b-2 border-transparent text-stone-500 hover:text-emerald-500">Meal Planner</a>
+            <a href="#tips" class="nav-link font-semibold py-4 px-2 md:px-4 border-b-2 border-transparent text-stone-500 hover:text-emerald-500">Pro Tips</a>
+        </nav>
+
+        <main>
+            <!-- Dashboard Section -->
+            <section id="dashboard" class="content-section">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-stone-800">Budget Overview</h2>
+                    <p class="mt-2 text-stone-600 max-w-2xl mx-auto">This section provides a real-time visualization of your grocery budget. As you select items from the shopping list, this chart will update to show how much you've allocated and how much remains of your $40 budget.</p>
+                </div>
+                <div class="flex flex-col md:flex-row items-center justify-center gap-8 bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+                    <div class="chart-container">
+                        <canvas id="budgetChart"></canvas>
+                    </div>
+                    <div class="text-center md:text-left">
+                        <h3 class="text-2xl font-bold text-stone-800">Your Shopping Budget</h3>
+                        <div class="mt-1 flex items-center justify-center md:justify-start gap-2">
+                            <label for="totalBudgetInput" class="text-stone-500">Total Budget:</label>
+                            <span class="text-stone-500">$</span>
+                            <input type="number" id="totalBudgetInput" value="40.00" step="0.01" min="0" class="w-24 p-1 border border-stone-300 rounded-md text-sm text-stone-700 text-center focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div class="mt-4 space-y-2">
+                            <div>
+                                <p class="text-lg font-semibold text-red-500">Spent: <span id="spentAmount">$0.00</span></p>
+                            </div>
+                            <div>
+                                <p class="text-lg font-semibold text-emerald-600">Remaining: <span id="remainingAmount">$40.00</span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- My Kitchen Inventory Section -->
+            <section id="inventory" class="content-section hidden">
+                 <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-stone-800">My Kitchen Inventory</h2>
+                    <p class="mt-2 text-stone-600 max-w-2xl mx-auto">Here's a quick look at the ingredients you already have on hand. Use the "Add Item" fields to update your stock, and click "×" to remove items you've used.</p>
+                </div>
+                <div class="grid md:grid-cols-2 gap-8">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+                        <h3 class="text-2xl font-bold mb-4 text-center">🧊 In the Freezer</h3>
+                        <ul id="freezer-list" class="space-y-2 text-lg text-stone-700 list-disc list-inside"></ul>
+                        <div class="flex mt-4 gap-2">
+                            <input type="text" id="add-freezer-list-input" placeholder="Add new item..." class="flex-1 p-2 border border-stone-300 rounded-md text-sm text-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <button id="add-freezer-list-btn" class="bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-md text-sm font-semibold transition-colors duration-200">Add</button>
+                        </div>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+                        <h3 class="text-2xl font-bold mb-4 text-center">🍎 In the Fridge</h3>
+                        <ul id="fridge-list" class="space-y-2 text-lg text-stone-700 list-disc list-inside"></ul>
+                        <div class="flex mt-4 gap-2">
+                            <input type="text" id="add-fridge-list-input" placeholder="Add new item..." class="flex-1 p-2 border border-stone-300 rounded-md text-sm text-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <button id="add-fridge-list-btn" class="bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-md text-sm font-semibold transition-colors duration-200">Add</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Shopping List Section -->
+            <section id="shopping" class="content-section hidden">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-stone-800">Trader Joe's Shopping List</h2>
+                    <p class="mt-2 text-stone-600 max-w-2xl mx-auto">This is your strategic shopping list to supplement your existing ingredients. Check items off to simulate adding them to your cart and watch your budget update on the Dashboard. You can also get AI-powered suggestions!</p>
+                </div>
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
+                    <div id="shopping-list-container" class="divide-y divide-stone-200"></div>
+                    <button id="getShoppingSuggestionsBtn" class="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded-full shadow-md transition-all duration-300 flex items-center justify-center gap-2 mt-6 mx-auto">
+                        <span id="shoppingSuggestButtonText">🛒 Get Trader Joe's Suggestions</span>
+                        <div id="shoppingSpinner" class="spinner hidden"></div>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Recipes Section -->
+            <section id="recipes" class="content-section hidden">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-stone-800">Meal Planner</h2>
+                    <p class="mt-2 text-stone-600 max-w-2xl mx-auto">Explore a variety of meal ideas you can create by combining your existing groceries with your new purchases. Use the filters to find inspiration for breakfast, lunch, or dinner, then click on any card to see the full recipe.</p>
+                </div>
+                <div class="flex flex-col sm:flex-row justify-center items-center gap-2 mb-8">
+                    <button class="recipe-filter-btn active-filter" data-filter="all">All</button>
+                    <button class="recipe-filter-btn" data-filter="breakfast">Breakfast</button>
+                    <button class="recipe-filter-btn" data-filter="lunch">Lunch</button>
+                    <button class="recipe-filter-btn" data-filter="dinner">Dinner</button>
+                    <button id="generateRecipesBtn" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 px-4 rounded-full shadow-md transition-all duration-300 flex items-center justify-center gap-2">
+                        <span id="generateButtonText">✨ Get More Recipes</span>
+                        <div id="spinner" class="spinner hidden"></div>
+                    </button>
+                </div>
+                <div id="recipe-grid" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-8"></div>
+            </section>
+
+            <!-- Tips Section -->
+            <section id="tips" class="content-section hidden">
+                <div class="text-center mb-8">
+                    <h2 class="text-3xl font-bold text-stone-800">Pro Tips for Smart Cooking</h2>
+                     <p class="mt-2 text-stone-600 max-w-2xl mx-auto">Elevate your kitchen game with these practical tips. From batch cooking to minimizing waste, these strategies will help you save time, money, and make the most out of every ingredient.</p>
+                </div>
+                <div id="tips-grid" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal Structure -->
+    <div id="recipeModalBackdrop" class="modal-backdrop"></div>
+    <div id="recipeModal" class="modal bg-white rounded-2xl shadow-2xl w-11/12 md:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div class="p-6 md:p-8">
+            <div class="flex justify-between items-start">
+                <h3 id="modal-title" class="text-2xl md:text-3xl font-bold mb-4"></h3>
+                <button id="closeModalBtn" class="text-stone-500 hover:text-stone-800 text-3xl">&times;</button>
+            </div>
+            <div id="modal-content" class="text-stone-700 prose max-w-none"></div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const appData = {
+                inventory: {
+                    fridge: ['Parsley', 'Avocado Ranch Salad Kit', 'Everything Bagels', 'Almond Chipotle Dip', 'Kiwi', 'Bruschetta sauce', 'Avocados', 'Grape Tomatoes', 'Burrata Filling', 'Grilled Chicken Breast', 'Chili onion Hummus', 'Deli Meats', 'Gruyère/Cheddar Mix', 'Baguette'],
+                    pantry: [
+                        'salt', 'black pepper', 'olive oil', 'butter', 'flour', 'sugar', 'baking powder', 'baking soda',
+                        'garlic powder', 'onion powder', 'paprika', 'cumin', 'chili powder', 'oregano', 'thyme',
+                        'vinegar', 'soy sauce', 'hot sauce', 'honey', 'maple syrup', 'breadcrumbs', 'canned tomatoes'
+                    ],
+                    freezer: ['Chicken Mole', 'Brown Rice', 'Ground Beef', 'Quinoa', 'White Rice', 'Dried Pasta\'s']
+                },
+                shoppingList: [
+                    { item: 'Cage-Free Eggs', price: 3.49, purpose: 'Breakfasts, binding agent, fried rice.', selected: false },
+                    { item: 'Black Beans (canned)', price: 1.98, purpose: 'Tacos, burritos, chili, bowls.', selected: false },
+                    { item: 'Jumbo Yellow Onion', price: 0.99, purpose: 'Aromatic base for sauces, beef dishes.', selected: false },
+                    { item: 'Organic Red Bell Pepper', price: 3.99, purpose: 'Adds crunch to salads, stir-fries, tacos.', selected: false },
+                    { item: 'Organic Vodka Sauce', price: 3.29, purpose: 'Transforms pasta into a gourmet meal.', selected: false },
+                    { item: 'Japanese-Style Fried Rice', price: 3.49, purpose: 'Quick base for adding protein.', selected: false },
+                    { item: 'Flour Tortillas', price: 1.69, purpose: 'Essential for tacos, burritos, wraps.', selected: false },
+                ],
+                recipes: [
+                    { name: "Everything Bagel & Egg Sandwich", category: "breakfast", ingredients: ["Everything Bagels", "Eggs (new)", "Gruyère/Cheddar Mix", "Deli Meats", "Avocado", "Grape Tomatoes"], prep: "Toast bagel. Scramble or fry eggs, melting cheese on top. Assemble with deli meat, avocado, and tomato slices." },
+                    { name: "Avocado Toast", category: "breakfast", ingredients: ["Baguette", "Avocados", "Grape Tomatoes", "Parsley", "Almond Chipotle Dip (optional)"], prep: "Toast baguette slices. Mash and spread avocado. Top with halved tomatoes and chopped parsley." },
+                    { name: "Avocado Ranch Chicken Salad", category: "lunch", ingredients: ["Avocado Ranch Salad Kit", "Grilled Chicken Breast", "Grape Tomatoes", "Avocado"], prep: "Dice grilled chicken. Combine with salad kit components. Add extra tomatoes and avocado for a heartier meal." },
+                    { name: "Deli Meat & Cheese Sandwich", category: "lunch", ingredients: ["Baguette", "Deli Meats", "Gruyère/Cheddar Mix", "Avocado", "Chili onion Hummus"], prep: "Slice baguette. Spread with hummus. Layer with deli meat, cheese, and avocado slices." },
+                    { name: "Hummus & Veggie Wraps", category: "lunch", ingredients: ["Flour Tortillas (new)", "Chili onion Hummus", "Grape Tomatoes", "Avocado", "Red Bell Pepper (new)"], prep: "Spread hummus on a tortilla. Fill with sliced pepper, tomatoes, and avocado. Roll up tightly." },
+                    { name: "Classic Beef & Vodka Sauce Pasta", category: "dinner", ingredients: ["Dried Pasta", "Ground Beef", "Vodka Sauce (new)", "Onion (new)", "Gruyère/Cheddar Mix"], prep: "Brown ground beef with diced onion. Add vodka sauce and simmer. Serve over cooked pasta with cheese." },
+                    { name: "Chicken Mole Rice Bowls", category: "dinner", ingredients: ["Chicken Mole", "Rice/Quinoa", "Avocado", "Grape Tomatoes", "Parsley"], prep: "Heat chicken mole. Serve over your choice of cooked rice or quinoa. Top with diced avocado, tomatoes, and parsley." },
+                    { name: "Quick Beef & Black Bean Tacos/Bowls", category: "dinner", ingredients: ["Ground Beef", "Black Beans (new)", "Tortillas (new)", "Pepper (new)", "Onion (new)", "Avocado"], prep: "Brown beef with onion and pepper. Stir in black beans and taco seasoning. Serve in warm tortillas with toppings." },
+                    { name: "Bruschetta Chicken & Burrata Bake", category: "dinner", ingredients: ["Grilled Chicken Breast", "Bruschetta sauce", "Burrata Filling", "Baguette"], prep: "Arrange chicken in a baking dish. Top with bruschetta sauce and dollops of burrata. Bake until bubbly. Serve with toasted baguette." },
+                    { name: "Elevated Fried Rice with Chicken/Beef", category: "dinner", ingredients: ["Japanese-Style Fried Rice (new)", "Chicken/Beef", "Eggs (new)", "Avocado"], prep: "Cook fried rice per package. Stir in cooked protein (chicken or beef) and scrambled egg. Top with sliced avocado." }
+                ],
+                tips: [
+                    { title: "Batch Cooking", content: "Cook large quantities of staples like rice, quinoa, and ground beef at the start of the week to save time on weeknights." },
+                    { title: "Ingredient Versatility", content: "Don't be afraid to use ingredients like avocado, tomatoes, and cheese across different meals to prevent waste and add variety." },
+                    { title: "Leverage Your Freezer", content: "Freeze extra portions of cooked meals or ingredients like chopped parsley in oil to extend their life and have them ready for future use." },
+                    { title: "The 'Use It Up' Meal", content: "Towards the end of the week, challenge yourself to create a meal from any remaining ingredients to minimize food waste." },
+                    { title: "Explore Trader Joe's", content: "Keep an eye out for seasonal and unique items at Trader Joe's. Their frozen section is great for finding quick and flavorful meal starters." }
+                ]
+            };
+
+            // Initial budget value from the input field
+            let budget = parseFloat(document.getElementById('totalBudgetInput').value);
+            let spent = 0;
+            let budgetChart;
+
+            const spentAmountEl = document.getElementById('spentAmount');
+            const remainingAmountEl = document.getElementById('remainingAmount');
+            const generateRecipesBtn = document.getElementById('generateRecipesBtn');
+            const generateButtonText = document.getElementById('generateButtonText');
+            const spinner = document.getElementById('spinner');
+
+            const getShoppingSuggestionsBtn = document.getElementById('getShoppingSuggestionsBtn');
+            const shoppingSuggestButtonText = document.getElementById('shoppingSuggestButtonText');
+            const shoppingSpinner = document.getElementById('shoppingSpinner');
+
+            const totalBudgetInput = document.getElementById('totalBudgetInput');
+
+            // Event listener for budget input
+            totalBudgetInput.addEventListener('input', () => {
+                const newBudget = parseFloat(totalBudgetInput.value);
+                if (!isNaN(newBudget) && newBudget >= 0) {
+                    budget = newBudget;
+                } else {
+                    // Revert to last valid budget or a default if input is invalid
+                    budget = 0; // Or a reasonable default
+                }
+                updateBudget();
+            });
+
+            // Modified updateBudget to calculate from appData.shoppingList
+            function updateBudget() {
+                spent = appData.shoppingList.reduce((total, item) => {
+                    return total + (item.selected ? item.price : 0);
+                }, 0);
+                
+                spentAmountEl.textContent = `$${spent.toFixed(2)}`;
+                remainingAmountEl.textContent = `$${(budget - spent).toFixed(2)}`;
+                
+                updateChart();
+            }
+
+            function initChart() {
+                const ctx = document.getElementById('budgetChart').getContext('2d');
+                budgetChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Spent', 'Remaining'],
+                        datasets: [{
+                            data: [spent, budget - spent],
+                            backgroundColor: ['#EF4444', '#10B981'],
+                            borderColor: '#f9fafb',
+                            borderWidth: 4,
+                            hoverOffset: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '70%',
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                enabled: true,
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed !== null) {
+                                            label += new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.parsed);
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            function updateChart() {
+                budgetChart.data.datasets[0].data[0] = spent;
+                budgetChart.data.datasets[0].data[1] = budget - spent;
+                budgetChart.update();
+            }
+
+            function renderInventoryList(listId, itemsArray) {
+                const listEl = document.getElementById(listId);
+                listEl.innerHTML = ''; 
+                itemsArray.forEach((item, index) => {
+                    const li = document.createElement('li');
+                    li.className = 'flex justify-between items-center group mb-1';
+                    li.innerHTML = `
+                        <span>${item}</span>
+                        <button class="delete-item-btn ml-2 text-red-500 hover:text-red-700 text-base font-bold transition-colors duration-200" data-list="${listId}" data-index="${index}">&times;</button>
+                    `;
+                    listEl.appendChild(li);
+                });
+            }
+
+            function populateInventory() {
+                renderInventoryList('fridge-list', appData.inventory.fridge);
+                renderInventoryList('freezer-list', appData.inventory.freezer);
+            }
+
+            function deleteInventoryItem(event) {
+                const listId = event.target.dataset.list;
+                const index = parseInt(event.target.dataset.index);
+                if (listId === 'fridge-list') {
+                    appData.inventory.fridge.splice(index, 1);
+                } else if (listId === 'freezer-list') {
+                    appData.inventory.freezer.splice(index, 1);
+                }
+                populateInventory(); 
+            }
+
+            // Event listeners for adding inventory items
+            document.getElementById('add-fridge-list-btn').addEventListener('click', () => {
+                const input = document.getElementById('add-fridge-list-input');
+                const item = input.value.trim();
+                if (item) {
+                    appData.inventory.fridge.push(item);
+                    input.value = '';
+                    populateInventory();
+                }
+            });
+            document.getElementById('add-freezer-list-btn').addEventListener('click', () => {
+                const input = document.getElementById('add-freezer-list-input');
+                const item = input.value.trim();
+                if (item) {
+                    // Fixed typo: freeizer to freezer
+                    appData.inventory.freezer.push(item); 
+                    input.value = '';
+                    populateInventory();
+                }
+            });
+
+            // Delegate delete events
+            document.getElementById('fridge-list').addEventListener('click', (e) => {
+                if (e.target.classList.contains('delete-item-btn')) {
+                    deleteInventoryItem(e);
+                }
+            });
+            document.getElementById('freezer-list').addEventListener('click', (e) => {
+                if (e.target.classList.contains('delete-item-btn')) {
+                    deleteInventoryItem(e);
+                }
+            });
+
+
+            function populateShoppingList() {
+                const container = document.getElementById('shopping-list-container');
+                container.innerHTML = ''; 
+                appData.shoppingList.forEach((item, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'py-4 flex items-start space-x-4';
+                    div.innerHTML = `
+                        <div class="flex items-center h-6">
+                            <input id="shop-item-${index}" data-price="${item.price}" type="checkbox" ${item.selected ? 'checked' : ''} class="h-5 w-5 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500">
+                        </div>
+                        <div class="flex-1">
+                            <label for="shop-item-${index}" class="block text-lg font-medium text-stone-800">${item.item} - $${item.price.toFixed(2)}</label>
+                            <p class="text-stone-500">${item.purpose}</p>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                });
+                // Event listener for shopping list change attached once at DOMContentLoaded
+                updateBudget(); // Ensure budget reflects newly populated list
+            }
+
+            function populateRecipes() {
+                const grid = document.getElementById('recipe-grid');
+                grid.innerHTML = '';
+                const activeFilter = document.querySelector('.recipe-filter-btn.active-filter').dataset.filter;
+
+                appData.recipes.forEach(recipe => {
+                    if (activeFilter === 'all' || recipe.category.toLowerCase() === activeFilter) {
+                        const card = document.createElement('div');
+                        card.className = 'recipe-card bg-white rounded-2xl shadow-sm border border-stone-200 overflow-hidden cursor-pointer';
+                        card.dataset.recipe = JSON.stringify(recipe);
+                        card.innerHTML = `
+                            <div class="p-6">
+                                <h4 class="text-xl font-bold text-stone-800">${recipe.name}</h4>
+                                <p class="text-emerald-600 font-medium capitalize mt-1">${recipe.category}</p>
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    }
+                });
+                
+                document.querySelectorAll('.recipe-card').forEach(card => {
+                    card.addEventListener('click', showModal);
+                });
+            }
+            
+            function populateTips() {
+                const grid = document.getElementById('tips-grid');
+                grid.innerHTML = ''; 
+                appData.tips.forEach(tip => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white p-6 rounded-2xl shadow-sm border border-stone-200';
+                    card.innerHTML = `
+                        <h4 class="text-xl font-bold text-stone-800 mb-2">${tip.title}</h4>
+                        <p class="text-stone-600">${tip.content}</p>
+                    `;
+                    grid.appendChild(card);
+                });
+            }
+            
+            function showModal(event) {
+                const card = event.currentTarget;
+                const recipe = JSON.parse(card.dataset.recipe);
+                
+                document.getElementById('modal-title').textContent = recipe.name;
+                const contentEl = document.getElementById('modal-content');
+                
+                const ingredientsList = recipe.ingredients.map(ing => `<li>${ing}</li>`).join('');
+
+                contentEl.innerHTML = `
+                    <h5 class="font-bold text-lg mb-2">Ingredients:</h5>
+                    <ul class="list-disc list-inside mb-4 space-y-1">
+                        ${ingredientsList}
+                    </ul>
+                    <h5 class="font-bold text-lg mb-2">Preparation:</h5>
+                    <p>${recipe.prep}</p>
+                `;
+                
+                document.getElementById('recipeModalBackdrop').style.display = 'block';
+                document.getElementById('recipeModal').style.display = 'block';
+            }
+            
+            function closeModal() {
+                document.getElementById('recipeModalBackdrop').style.display = 'none';
+                document.getElementById('recipeModal').style.display = 'none';
+            }
+
+            async function generateRecipesWithGemini() {
+                generateRecipesBtn.disabled = true;
+                generateButtonText.classList.add('hidden');
+                spinner.classList.remove('hidden');
+
+                const currentFridgeItems = Array.from(document.querySelectorAll('#fridge-list li span')).map(el => el.textContent);
+                const currentFreezerItems = Array.from(document.querySelectorAll('#freezer-list li span')).map(el => el.textContent);
+                
+                const combinedExistingIngredients = [
+                    ...currentFridgeItems,
+                    ...currentFreezerItems,
+                    ...appData.inventory.pantry
+                ].filter(item => item && item.trim() !== '').join(', '); // Filter out empty strings
+
+                const purchasedIngredients = appData.shoppingList
+                    .filter(item => item.selected)
+                    .map(item => item.item)
+                    .join(', ');
+
+                const prompt = `
+                    You are a recipe generator. Based on the following ingredients, suggest 3 unique and creative recipes.
+                    Consider common kitchen essentials (butter, olive oil, salt, pepper, common spices, etc.) are available.
+                    Focus on using the provided ingredients, combining them in interesting ways.
+                    Ensure the recipes are suitable for different meals (Breakfast, Lunch, Dinner).
+                    If specific items are marked as '(new)', assume they have been recently purchased from Trader Joe's.
+                    
+                    Existing Ingredients in my kitchen (fridge, freezer, pantry): ${combinedExistingIngredients}
+                    New (Trader Joe's) Ingredients (selected from shopping list): ${purchasedIngredients}
+
+                    Provide the output as a JSON array of objects, where each object has the following structure:
+                    {
+                        "name": "Recipe Name",
+                        "category": "breakfast" | "lunch" | "dinner",
+                        "ingredients": ["Ingredient 1", "Ingredient 2", "Ingredient 3"],
+                        "prep": "Detailed preparation instructions."
+                    }
+                `;
+
+                try {
+                    let chatHistory = [];
+                    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                    const payload = {
+                        contents: chatHistory,
+                        generationConfig: {
+                            responseMimeType: "application/json",
+                            responseSchema: {
+                                type: "ARRAY",
+                                items: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        "name": { "type": "STRING" },
+                                        "category": { "type": "STRING" },
+                                        "ingredients": {
+                                            "type": "ARRAY",
+                                            "items": { "type": "STRING" }
+                                        },
+                                        "prep": { "type": "STRING" }
+                                    },
+                                    "propertyOrdering": ["name", "category", "ingredients", "prep"]
+                                }
+                            }
+                        }
+                    };
+                    const apiKey = "";
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const result = await response.json();
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const json = result.candidates[0].content.parts[0].text;
+                        const newRecipes = JSON.parse(json);
+                        
+                        appData.recipes.push(...newRecipes);
+                        populateRecipes(); 
+                    } else {
+                        console.error("Gemini API returned an unexpected response structure:", result);
+                        alert("Failed to generate recipes. Please try again.");
+                    }
+                } catch (error) {
+                    console.error("Error calling Gemini API:", error);
+                    alert("An error occurred while generating recipes. Please check your network connection and try again.");
+                } finally {
+                    generateRecipesBtn.disabled = false;
+                    generateButtonText.classList.remove('hidden');
+                    spinner.classList.add('hidden');
+                }
+            }
+
+            async function generateShoppingSuggestionsWithGemini() {
+                getShoppingSuggestionsBtn.disabled = true;
+                shoppingSuggestButtonText.classList.add('hidden');
+                shoppingSpinner.classList.remove('hidden');
+
+                const currentFridgeItems = Array.from(document.querySelectorAll('#fridge-list li span')).map(el => el.textContent);
+                const currentFreezerItems = Array.from(document.querySelectorAll('#freezer-list li span')).map(el => el.textContent);
+                
+                const combinedExistingIngredients = [
+                    ...currentFridgeItems,
+                    ...currentFreezerItems,
+                    ...appData.inventory.pantry
+                ].filter(item => item && item.trim() !== '').join(', ');
+
+                const currentRemainingBudget = parseFloat(remainingAmountEl.textContent.replace('$', ''));
+
+                const prompt = `
+                    You are a Trader Joe's shopping assistant. Based on my current kitchen inventory and remaining budget, suggest 5 versatile grocery items from Trader Joe's that would enhance my meal options.
+                    Focus on items that complement existing ingredients and offer good value within the budget.
+                    Do not suggest items I explicitly have in my fridge or freezer.
+                    My current kitchen inventory: ${combinedExistingIngredients}.
+                    My remaining budget: $${currentRemainingBudget.toFixed(2)}.
+
+                    Provide the output as a JSON array of objects, where each object has the following structure:
+                    {
+                        "item": "Item Name (Trader Joe's product focus)",
+                        "price": 0.00,
+                        "purpose": "Why this item is useful and how it can be used with existing ingredients."
+                    }
+                `;
+
+                try {
+                    let chatHistory = [];
+                    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                    const payload = {
+                        contents: chatHistory,
+                        generationConfig: {
+                            responseMimeType: "application/json",
+                            responseSchema: {
+                                type: "ARRAY",
+                                items: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        "item": { "type": "STRING" },
+                                        "price": { "type": "NUMBER" },
+                                        "purpose": { "type": "STRING" }
+                                    },
+                                    "propertyOrdering": ["item", "price", "purpose"]
+                                }
+                            }
+                        }
+                    };
+                    const apiKey = ""; 
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const result = await response.json();
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const json = result.candidates[0].content.parts[0].text;
+                        const newSuggestions = JSON.parse(json);
+                        
+                        // Filter out suggestions that exceed the budget
+                        const feasibleSuggestions = newSuggestions.filter(s => s.price <= currentRemainingBudget);
+
+                        if (feasibleSuggestions.length > 0) {
+                             // Clear existing shopping list and add new suggestions
+                            appData.shoppingList = feasibleSuggestions.map(s => ({...s, selected: false}));
+                        } else {
+                            alert("No suitable shopping suggestions found within your budget. Try adjusting your current inventory or budget.");
+                            appData.shoppingList = []; // Clear list if no feasible suggestions
+                        }
+                        
+                        populateShoppingList(); 
+                    } else {
+                        console.error("Gemini API returned an unexpected response structure:", result);
+                        alert("Failed to generate shopping suggestions. Please try again.");
+                    }
+                } catch (error) {
+                    console.error("Error calling Gemini API for shopping suggestions:", error);
+                    alert("An error occurred while generating shopping suggestions. Please check your network connection and try again.");
+                } finally {
+                    getShoppingSuggestionsBtn.disabled = false;
+                    shoppingSuggestButtonText.classList.remove('hidden');
+                    shoppingSpinner.classList.add('hidden');
+                }
+            }
+
+
+            // Navigation
+            const navLinks = document.querySelectorAll('.nav-link');
+            const sections = document.querySelectorAll('.content-section');
+
+            function handleNav(e) {
+                e.preventDefault();
+                const targetId = e.currentTarget.getAttribute('href').substring(1);
+
+                sections.forEach(section => {
+                    if (section.id === targetId) {
+                        section.classList.remove('hidden');
+                    } else {
+                        section.classList.add('hidden');
+                    }
+                });
+
+                navLinks.forEach(link => {
+                    link.classList.remove('active');
+                    if (link.getAttribute('href') === `#${targetId}`) {
+                        link.classList.add('active');
+                    }
+                });
+            }
+
+            navLinks.forEach(link => link.addEventListener('click', handleNav));
+            
+            // Recipe Filters
+            const filterButtons = document.querySelectorAll('.recipe-filter-btn');
+            filterButtons.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    filterButtons.forEach(b => b.classList.remove('active-filter'));
+                    e.target.classList.add('active-filter');
+                    populateRecipes();
+                });
+            });
+            
+            // Add custom styles for filter buttons
+            const styleSheet = document.createElement("style");
+            styleSheet.innerText = `
+                .recipe-filter-btn {
+                    padding: 8px 16px;
+                    border: 1px solid #d6d3d1; /* stone-300 */
+                    border-radius: 9999px;
+                    background-color: white;
+                    color: #57534e; /* stone-600 */
+                    font-weight: 500;
+                    transition: all 0.2s ease-in-out;
+                }
+                .recipe-filter-btn:hover {
+                    background-color: #f5f5f4; /* stone-100 */
+                }
+                .recipe-filter-btn.active-filter {
+                    background-color: #10B981; /* emerald-500 */
+                    color: white;
+                    border-color: #10B981;
+                }
+            `;
+            document.head.appendChild(styleSheet);
+            
+            // Modal close events
+            document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+            document.getElementById('recipeModalBackdrop').addEventListener('click', closeModal);
+
+            // Add event listener for Gemini recipe generation
+            generateRecipesBtn.addEventListener('click', generateRecipesWithGemini);
+            getShoppingSuggestionsBtn.addEventListener('click', generateShoppingSuggestionsWithGemini);
+
+            // Attach shopping list change listener ONCE
+            document.getElementById('shopping-list-container').addEventListener('change', (event) => {
+                if (event.target.type === 'checkbox' && event.target.id.startsWith('shop-item-')) {
+                    const index = parseInt(event.target.id.split('-')[1]);
+                    // Defensive check: Ensure the index is valid for the current appData.shoppingList
+                    if (index >= 0 && index < appData.shoppingList.length) {
+                        appData.shoppingList[index].selected = event.target.checked;
+                    } else {
+                        console.warn(`Attempted to update shoppingList item at invalid index: ${index}. Element ID: ${event.target.id}`);
+                    }
+                    updateBudget(); // Recalculate and update UI based on updated appData.shoppingList
+                }
+            });
+
+            // Initial population
+            initChart();
+            populateInventory();
+            populateShoppingList(); // This now calls updateBudget() internally after rendering
+            populateRecipes();
+            populateTips();
+
+            // Initial budget update handled by populateShoppingList
+        });
+    </script>
+</body>
+</html>
