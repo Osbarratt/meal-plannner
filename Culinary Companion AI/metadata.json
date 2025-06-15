@@ -1,0 +1,6 @@
+{
+  "name": "Culinary Companion AI",
+  "description": "An app to manage your pantry and get recipe ideas and Trader Joe's shopping suggestions powered by Gemini.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
